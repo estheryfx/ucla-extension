@@ -1,0 +1,472 @@
+---
+title: "UCLA Extension Survey Analysis"
+author: "FANXING YU"
+date: "2/26/2020"
+output: pdf_document
+---
+
+
+```{R}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(igraph)
+library(tidytext)
+library(ggraph)
+library(widyr)
+library(wordcloud)
+
+```
+
+
+# Data cleaning
+```{R}
+data = read_xlsx("ALC-Program-Survey-Report_edited_200307.xlsx")
+data = data[-c(7,9),]
+
+#this person wrote "d" for multiple answers. we'll change it to NA
+which(data$`928281: How did you learn about the UCLA Extension American Language Center program?` == "d")
+data[126,c(1,2,3,5,6,7)] = NA
+
+write.csv(data, "cleandata.csv")
+
+```
+
+
+#### 928281: How did you learn about the UCLA Extension American Language Center program?
+
+```{R}
+data$`928281: How did you learn about the UCLA Extension American Language Center program?`
+text <- as.vector(na.omit(data$`928281: How did you learn about the UCLA Extension American Language Center program?`))
+#remove unwanted symbols
+text <- gsub("[^a-zA-Z ]", " ",text)
+text_df <- data_frame(line=1:length(text), text=text)
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+
+#most used words
+text_df %>% count(word, sort=TRUE) 
+
+# plot
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:10,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+```
+
+#### 930244: Why did you choose to study at the UCLA Extension American Language Center?
+
+```{R}
+data$`930244: Why did you choose to study at the UCLA Extension American Language Center?`
+text <- as.vector(na.omit(data$`930244: Why did you choose to study at the UCLA Extension American Language Center?`))
+#remove unwanted symbols
+text <- gsub("[^a-zA-Z ]", " ",text)
+text_df <- data_frame(line=1:length(text), text=text)
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+#most used words
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:10,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+#correlation between word pairs
+word_cors <- text_df %>%
+  group_by(word) %>%
+  filter(n() >= 2) %>% 
+  pairwise_cor(word, line, sort = TRUE)
+word_cors
+
+#top 6 words 
+word_cors %>%
+  filter(item1 %in% c("improve", "ucla","english","school","alc","reputation", "skills")) %>%
+  group_by(item1) %>%
+  top_n(6) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+set.seed(2016)
+
+#visualizing bigrams
+word_cors %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+#### 930247: What do you like best about your American Language Center program?
+
+```{R}
+data$`930247: What do you like best about your American Language Center program?`
+data$`930247: What do you like best about your American Language Center program?`[data$`930247: What do you like best about your American Language Center program?` == "NULL, NULL"] = NA
+data$`930247: What do you like best about your American Language Center program?`[data$`930247: What do you like best about your American Language Center program?` == "NULL"] = NA
+
+text <- as.vector(na.omit(data$`930247: What do you like best about your American Language Center program?`))
+text <- gsub("[^a-zA-Z0-9 ]", " ",text)
+text <- gsub("NULL", "",text)
+
+text_df <- data_frame(line=1:length(text), text=text)
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:10,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+
+#geting all positive and negative words
+all_pn_words = get_sentiments("bing") 
+#set funny to a positive word
+all_pn_words[which(all_pn_words$word == "funny"), 2] = "positive"
+
+#all positive and negative words in the text
+pn_words <- text_df %>% inner_join(all_pn_words)
+pn_words = pn_words %>%  count(word, sentiment, sort = TRUE) %>% ungroup()
+#Plot
+pn_words %>% mutate(n=ifelse(sentiment=='negative', -n,n)) %>% 
+  mutate(word=reorder(word,n)) %>%
+  ggplot(aes(word,n,fill=sentiment)) + geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab('Contribution to sentiment') + ggtitle('Most common positive and negative words')
+table(pn_words$sentiment)
+prop.table(table(pn_words$sentiment))
+
+#top 5 positve and negative words
+pn_words %>% filter(sentiment == "positive") %>% head(n=5)
+pn_words %>% filter(sentiment == "negative") %>% head(n=5)
+
+#counts words co-occurring within each line 
+word_pairs <- text_df %>% pairwise_count(word,line,sort=TRUE)
+word_pairs
+
+#correlation between word pairs
+word_cors <- text_df %>%
+  group_by(word) %>%
+  filter(n() >= 2) %>% 
+  pairwise_cor(word, line, sort = TRUE)
+word_cors
+
+#top 6 words correlated to fun and expensive
+word_cors %>%
+  filter(item1 %in% c("nice", "love","helpful","hard","bad","mistake")) %>%
+  group_by(item1) %>%
+  top_n(6) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+set.seed(2016)
+
+#visualizing bigrams
+word_cors %>%
+  filter(correlation > .5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+#### 930246: What would improve your experience at ALC**
+
+```{R}
+data$`930246: What would improve your experience at ALC**`[data$`930246: What would improve your experience at ALC**` == "NULL, NULL"] = NA
+text <- as.vector(na.omit(data$`930246: What would improve your experience at ALC**`))
+text <- gsub("[^a-zA-Z0-9 ]", " ",text)
+text <- gsub("NULL", "",text)
+text_df <- data_frame(line=1:length(text), text=text)
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:20,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+
+#Positive and Negative words
+pn_words = pn_words <- text_df %>% inner_join(all_pn_words)
+#Plot
+pn_words = pn_words %>%  count(word, sentiment, sort = TRUE) %>% ungroup()
+pn_words %>% mutate(n=ifelse(sentiment=='negative', -n,n)) %>% 
+  mutate(word=reorder(word,n)) %>%
+  ggplot(aes(word,n,fill=sentiment)) + geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab('Contribution to sentiment') + ggtitle('Most common positive and negative words')
+
+table(pn_words$sentiment)
+prop.table(table(pn_words$sentiment))
+
+
+
+#top 5 positve and negative words
+pn_words %>% filter(sentiment == "positive") %>% head(n=5)
+pn_words %>% filter(sentiment == "negative") %>% head(n=5)
+
+#counts words co-occurring within each line 
+word_pairs <- text_df %>% pairwise_count(word,line,sort=TRUE)
+
+#correlation between word pairs
+word_cors <- text_df %>%
+  group_by(word) %>%
+  filter(n() >= 2) %>% 
+  pairwise_cor(word, line, sort = TRUE)
+word_cors
+
+#top 6 words correlated to fun and expensive
+word_cors %>%
+  filter(item1 %in% c("fun", "improve", "skill", "bad", "expensive")) %>%
+  group_by(item1) %>%
+  top_n(6) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity",fill = "lightblue") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+set.seed(2016)
+
+#visualizing bigrams
+word_cors %>%
+  filter(correlation > .4) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+
+#### 930243: Please describe your work experience before you came to the American Language Center.
+
+```{R}
+data$`930243: Please describe your work experience before you came to the American Language Center.`
+text <- as.vector(na.omit(data$`930243: Please describe your work experience before you came to the American Language Center.`))
+text <- gsub("[^a-zA-Z0-9 ]", " ",text)
+text <- gsub("NULL", "",text)
+text_df <- data_frame(line=1:length(text), text=text)
+text_df
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+#count of each word
+text_df %>% count(word, sort=TRUE)
+
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:10,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+```
+
+
+#### Would you recommend the ALC program to a friend? 1-5
+
+```{R}
+text = c("Definitely would not recommend", "Probably would not recommend", "Not sure", "Probably Recommend", "Strongly Recommend")[as.numeric(data$`Would you recommend the ALC program to a friend? 1-5`)]
+table(text)
+ggplot(data, aes(x=text)) + geom_histogram( stat = "count")
+
+### OR
+
+table(data$`Would you recommend the ALC program to a friend? 1-5`)
+ggplot(data, aes(x=data$`Would you recommend the ALC program to a friend? 1-5`)) + geom_histogram( stat = "count")
+```
+
+#### 930245: What are your most important goals after you complete your studies at the American Language Center?
+
+```{R}
+text <- as.vector(na.omit(data$`930245: What are your most important goals after you complete your studies at the American Language Center?`))
+text <- gsub("[^a-zA-Z0-9 ]", " ",text)
+text <- gsub("NULL", "",text)
+text_df <- data_frame(line=1:length(text), text=text)
+text_df
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+#count of each word
+text_df %>% count(word, sort=TRUE)
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:15,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+
+#wordcloud
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+
+#correlation between word pairs
+word_cors <- text_df %>%
+  group_by(word) %>%
+  filter(n() >= 2) %>% 
+  pairwise_cor(word, line, sort = TRUE)
+word_cors
+
+#top 6 words correlated to "goal","apply","ucla","english"
+word_cors %>%
+  filter(item1 %in% c("goal", "apply","ucla","english")) %>%
+  group_by(item1) %>%
+  top_n(6) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity",fill = "lightblue") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+```
+
+
+
+
+
+### "930246: What would improve your experience at ALC**"
+
+```{R}
+data$`930246: What would improve your experience at ALC**`[data$`930246: What would improve your experience at ALC**` == "NULL, NULL"] = NA
+text <- as.vector(na.omit(data$`930246: What would improve your experience at ALC**`))
+text_df <- data_frame(line=1:length(text), text=text)
+text_df <- text_df %>% unnest_tokens(word, text) %>% anti_join(stop_words)
+text_df <- text_df %>% filter(!word %in% c('â', "null"))
+text_df$word =  str_extract(text_df$word, "[^.]+") #extracting everything before a period
+text_df
+
+#all positive and negative words in the text
+pn_words <- text_df %>% inner_join(get_sentiments("bing"))
+pn_words
+
+#create a new column that marks the words as positive or negative, NA if neither
+text_df <- text_df %>% mutate("sentiment" = text_df$word %in% get_sentiments("bing")$word)
+text_df[text_df$sentiment == TRUE, "sentiment"] = pn_words$sentiment
+text_df[text_df$sentiment == FALSE, "sentiment"] = NA
+text_df
+
+#count of all words
+text_df = text_df %>% count(word, sort=TRUE) 
+text_df$word
+
+
+
+#Plot
+pn_words = pn_words %>%  count(word, sentiment, sort = TRUE) %>% ungroup()
+pn_words %>% mutate(n=ifelse(sentiment=='negative', -n,n)) %>% 
+  mutate(word=reorder(word,n)) %>%
+  ggplot(aes(word,n,fill=sentiment)) + geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab('Contribution to sentiment') + ggtitle('Most common positive and negative words')
+
+table(pn_words$sentiment)
+prop.table(table(pn_words$sentiment))
+
+
+```
+
+
+
+
+#### 928282: What was your experience learning or studying foreign languages before you came to the American Language Center?
+
+```{R}
+data$`928282: What was your experience learning or studying foreign languages before you came to the American Language Center?`[data$`928282: What was your experience learning or studying foreign languages before you came to the American Language Center?` == "NULL, NULL"] = NA
+text <- as.vector(na.omit(data$`928282: What was your experience learning or studying foreign languages before you came to the American Language Center?`))
+text <- gsub("[^a-zA-Z0-9.?!;, ]", "",text)
+text <- gsub("NULL", "",text)
+text_df <- data_frame(line=1:length(text), text=text)
+text_df
+
+#separate each word while preserving line number. Remove stop words
+text_df <- text_df %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word)
+
+#frequency plot
+a<- text_df%>% count(word, sort=TRUE) 
+a[1:10,]%>% ggplot(aes(x=word,y=n))+geom_bar(stat = 'identity', fill = "lightblue")
+
+#wordcloud
+wordcloud(words = a$word, freq = a$n, min.freq = 1,
+max.words=100, random.order=FALSE, rot.per=0.35,
+colors=brewer.pal(8, "Dark2"))
+
+
+#all positive and negative words in the text
+pn_words <- text_df %>% inner_join(get_sentiments("bing"))
+pn_words
+
+#counts words co-occurring within each line 
+word_pairs <- text_df %>% pairwise_count(word,line,sort=TRUE)
+word_pairs
+
+#correlation between word pairs
+word_cors <- text_df %>%
+  group_by(word) %>%
+  filter(n() >= 2) %>% 
+  pairwise_cor(word, line, sort = TRUE)
+word_cors
+
+#top 6 words correlated to fun and expensive
+word_cors %>%
+  filter(item1 %in% c("english", "china","school","country","international")) %>%
+  group_by(item1) %>%
+  top_n(6) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity",fill = "lightblue") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+set.seed(2016)
+
+#visualizing bigrams
+word_cors %>%
+  filter(correlation > .4) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+
+
+
